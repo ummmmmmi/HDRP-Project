@@ -1334,6 +1334,7 @@ namespace UnityEngine.Rendering.HighDefinition
 
             // Blue Noise shadow dithering
             public float volumetricShadowJitterScale;
+            public BlueNoise.DitheredTextureSet ditheredTextureSet;
         }
 
         TextureHandle VolumetricLightingPass(RenderGraph renderGraph, HDCamera hdCamera, TextureHandle depthTexture, TextureHandle densityBuffer,
@@ -1418,6 +1419,10 @@ namespace UnityEngine.Rendering.HighDefinition
                     // This controls the spatial jitter range for shadow sampling
                     passData.volumetricShadowJitterScale = fog.volumetricShadowJitterScale.value;
 
+                    // Get Blue Noise textures for BND Sequence sampling
+                    BlueNoise blueNoise = GetBlueNoiseManager();
+                    passData.ditheredTextureSet = blueNoise.DitheredTextureSet8SPP();
+
                     // Water stuff
                     if (passData.water)
                     {
@@ -1438,6 +1443,9 @@ namespace UnityEngine.Rendering.HighDefinition
 
                             // Bind Blue Noise shadow dithering parameter
                             ctx.cmd.SetComputeFloatParam(data.volumetricLightingCS, HDShaderIDs._VolumetricShadowJitterScale, data.volumetricShadowJitterScale);
+
+                            // Bind Blue Noise textures for BND Sequence sampling
+                            BlueNoise.BindDitheredTextureSet(ctx.cmd, data.ditheredTextureSet);
 
                             ctx.cmd.SetComputeTextureParam(data.volumetricLightingCS, data.volumetricLightingKernel, HDShaderIDs._MaxZMaskTexture, data.maxZBuffer);  // Read
 

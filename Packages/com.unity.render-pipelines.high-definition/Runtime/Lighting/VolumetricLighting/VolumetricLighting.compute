@@ -18,7 +18,7 @@
 // DEBUG
 // 0 正常效果
 // 1 输出该模块的调试
-// #define DEBUG_OUTPUT               0
+#define DEBUG_OUTPUT               0
 #define DEBUG_OUTPUT_NONE          0
 #define DEBUG_OUTPUT_SHADOW        1
 #define DEBUG_OUTPUT_DENSITY       2
@@ -734,8 +734,9 @@ void FillVolumetricLightingBuffer(LightLoopContext context, uint featureFlags,
         // https://en.wikipedia.org/wiki/Stochastic_universal_sampling
         float perPixelRandomOffset = GenerateHashedRandomFloat(posInput.positionSS);
         // perPixelRandomOffset = GetBlueNoiseShadowJitter2D(posInput.positionSS, (uint)_VBufferSampleOffset.z).x;
+        perPixelRandomOffset = InterleavedGradientNoise(posInput.positionSS, (uint)_VBufferSampleOffset.z);
         // perPixelRandomOffset = GetBlueNoiseShadowJitterPolar(posInput.positionSS, (uint)_VBufferSampleOffset.z).x;
-        // perPixelRandomOffset *= _VolumetricShadowJitterScale;
+        perPixelRandomOffset *= _VolumetricShadowJitterScale;
         // #ifdef DEBUG_OUTPUT
         // // 输出 GetBNDSequenceSample (蓝噪声)
         // float2 bnNoise2D = GetBlueNoiseShadowJitter2D(posInput.positionSS, (uint)_VBufferSampleOffset.z);
@@ -743,9 +744,9 @@ void FillVolumetricLightingBuffer(LightLoopContext context, uint featureFlags,
         // _VBufferLighting[voxelCoord] = max(0, float4(bnNoise2D.xxx * _VolumetricShadowJitterScale, 1.0) * float4(GetCurrentExposureMultiplier().xxx, 1));
         // #endif
         
-        // #ifdef DEBUG_OUTPUT
-        // _VBufferLighting[voxelCoord] = max(0, float4(perPixelRandomOffset.xxx, 1.0) * float4(GetCurrentExposureMultiplier().xxx, 1));
-        // #endif
+        #ifdef DEBUG_OUTPUT
+        _VBufferLighting[voxelCoord] = max(0, float4(perPixelRandomOffset.xxx, 1.0) * float4(GetCurrentExposureMultiplier().xxx, 1));
+        #endif
 
     #ifdef ENABLE_REPROJECTION
         // This is a time-based sequence of 7 equidistant numbers from 1/14 to 13/14.
