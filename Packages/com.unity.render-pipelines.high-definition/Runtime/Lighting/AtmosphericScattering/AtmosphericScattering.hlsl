@@ -295,10 +295,16 @@ bool EvaluateAtmosphericScattering(PositionInputs posInput, float3 V, out float3
                                          _VBufferDistanceDecodingParams,
                                          true, doBiquadraticReconstruction, false);
 
+            
             // TODO: add some slowly animated noise (dither?) to the reconstructed value.
             // TODO: re-enable tone mapping after implementing pre-exposure.
             volFog = DelinearizeRGBA(float4(/*FastTonemapInvert*/(value.rgb), value.a));
             volFogEnd = _VBufferLastSliceDist;
+
+            // debug
+            color = volFog;
+            opacity = 1.0f;
+            return true;
         }
 
         float distDelta = tFrag - volFogEnd;

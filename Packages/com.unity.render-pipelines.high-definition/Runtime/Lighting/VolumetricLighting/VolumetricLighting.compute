@@ -15,6 +15,16 @@
 #pragma multi_compile _ SUPPORT_WATER_ABSORPTION
 #pragma multi_compile _ PROBE_VOLUMES_L1 PROBE_VOLUMES_L2
 
+// DEBUG
+// 0 正常效果
+// 1 输出该模块的调试
+// #define DEBUG_OUTPUT               0
+#define DEBUG_OUTPUT_NONE          0
+#define DEBUG_OUTPUT_SHADOW        1
+#define DEBUG_OUTPUT_DENSITY       2
+#define DEBUG_OUTPUT_LIGHTING      3
+#define DEBUG_OUTPUT_NOISE         4
+
 // Don't want contact shadows
 #define LIGHT_EVALUATION_NO_CONTACT_SHADOWS // To define before LightEvaluation.hlsl
 // #define LIGHT_EVALUATION_NO_HEIGHT_FOG
@@ -51,6 +61,8 @@
 #include "Packages/com.unity.render-pipelines.core/ShaderLibrary/Filtering.hlsl"
 #include "Packages/com.unity.render-pipelines.core/ShaderLibrary/VolumeRendering.hlsl"
 #include "Packages/com.unity.render-pipelines.core/ShaderLibrary/EntityLighting.hlsl"
+
+#include "Packages/com.unity.render-pipelines.high-definition/Runtime/RenderPipeline/Raytracing/Shaders/RaytracingSampling.hlsl"
 
 // We need to include this "for reasons"...
 #include "Packages/com.unity.render-pipelines.high-definition/Runtime/Material/Builtin/BuiltinData.hlsl"
@@ -152,6 +164,77 @@ float ComputeHistoryWeight()
     return historyWeight;
 }
 
+// 使用 BND Sequence 获取阴影抖动值
+float2 GetBlueNoiseShadowJitter2D(uint2 pixelCoord, uint frameIndex)
+{
+    // 使用不同维度获取两个独立的 blue noise 值
+    float jitterX = GetBNDSequenceSample(pixelCoord, frameIndex & 255, 0);
+    float jitterY = GetBNDSequenceSample(pixelCoord, frameIndex & 255, 1);
+
+    // 转换到 [-1, 1] 范围
+    return float2(jitterX, jitterY) * 2.0 - 1.0;
+}
+
+// 或者使用极坐标形式（视觉上效果更好）
+float2 GetBlueNoiseShadowJitterPolar(uint2 pixelCoord, uint frameIndex)
+{
+    float angle = GetBNDSequenceSample(pixelCoord, frameIndex & 255, 0) * TWO_PI;
+    float radius = GetBNDSequenceSample(pixelCoord, frameIndex & 255, 1);
+
+    // 使用泊松盘分布的半径
+    radius = sqrt(radius);
+
+    return float2(cos(angle), sin(angle)) * radius;
+}
+
+// Blue Noise 阴影抖动参数（由 C# 端设置）
+float _VolumetricShadowJitterScale;
+
+// 带空间抖动的方向光阴影采样（使用 BND Sequence）
+real GetDirectionalShadowAttenuationWithBlueNoise(
+    inout HDShadowContext shadowContext,
+    float2 positionSS,
+    float3 positionWS,
+    float3 normalWS,
+    int shadowDataIndex,
+    float3 L,
+    float2 jitterOffset)
+{
+#if SHADOW_AUTO_FLIP_NORMAL
+    normalWS *= FastSign(dot(normalWS, L));
+#endif
+    // 使用带 Blue Noise 抖动的阴影采样函数
+    return EvalShadow_CascadedDepth_Dither_BlueNoise(shadowContext, _ShadowmapCascadeAtlas, s_linear_clamp_compare_sampler,
+                                                      positionSS, positionWS, normalWS, shadowDataIndex, L, jitterOffset);
+}
+
+// 带空间抖动的方向光阴影采样
+// real GetDirectionalShadowAttenuationWithJitter(
+//     ShadowContext shadowContext,
+//     uint2 positionSS,
+//     float3 positionWS,
+//     float3 normalWS,
+//     int shadowIndex,
+//     float3 L,
+//     float2 jitterOffset)
+// {
+//     // 获取阴影坐标（需要根据实际 shadow 架构调整）
+//     HDShadowData sd = _HDShadowDatas[shadowIndex];
+//
+//     // 计算世界空间到阴影空间的变换
+//     float4 shadowCoord = mul(float4(positionWS, 1), sd.worldToShadow);
+//
+//     // 应用 Blue Noise 抖动到阴影 UV
+//     shadowCoord.xy += jitterOffset * _CascadeShadowAtlasSize.zw;
+//
+//     // 执行阴影采样（使用 ULTRA_LOW 的 Gather 方法）
+//     return SampleShadow_Gather_PCF(_CascadeShadowAtlasSize.zwxy,
+//                                    shadowCoord.xyz,
+//                                    _CascadeShadowAtlas,
+//                                    s_point_clamp_sampler,
+//                                    0);
+// }
+
 // Computes the light integral (in-scattered radiance) within the voxel.
 // Multiplication by the scattering coefficient and the phase function is performed outside.
 VoxelLighting EvaluateVoxelLightingDirectional(LightLoopContext context, uint featureFlags, PositionInputs posInput, float3 centerWS,
@@ -194,6 +277,33 @@ VoxelLighting EvaluateVoxelLightingDirectional(LightLoopContext context, uint fe
             #else
                 float3 shadowN = 0; // No bias
             #endif // SHADOW_VIEW_BIAS
+
+            // 使用 BND Sequence 生成阴影采样偏移
+            float2 shadowJitter = GetBlueNoiseShadowJitterPolar(posInput.positionSS, (uint)_VBufferSampleOffset.z);
+            shadowJitter *= _VolumetricShadowJitterScale;
+
+            // 应用 Blue Noise 到阴影采样
+            // context.shadowValue = GetDirectionalShadowAttenuationWithBlueNoise(
+            //     context.shadowContext,
+            //     posInput.positionSS,
+            //     posInput.positionWS,
+            //     shadowN,
+            //     light.shadowIndex,
+            //     L,
+            //     shadowJitter
+            // );
+
+            // 应用到阴影采样
+            // context.shadowValue = GetDirectionalShadowAttenuationWithJitter(
+            //     context.shadowContext,
+            //     posInput.positionSS,
+            //     posInput.positionWS,
+            //     shadowN,
+            //     light.shadowIndex,
+            //     L,
+            //     shadowJitter
+            // );
+            
 
             context.shadowValue = GetDirectionalShadowAttenuation(context.shadowContext,
                                                                   posInput.positionSS, posInput.positionWS, shadowN,
@@ -280,8 +390,13 @@ VoxelLighting EvaluateVoxelLightingDirectional(LightLoopContext context, uint fe
             // Note: the 'weight' accounts for transmittance from 't0' to 't'.
             lighting.radianceNoPhase += (weight * lightColor.rgb);
             lighting.radianceComplete += (weight * lightColor.rgb) * phase;
+
+            // 行 343 return 之前临时改成：
+            // return float4(shadow.xxx, 1.0) * 100; // 放大显示
         }
     }
+
+
 
     return lighting;
 }
@@ -618,6 +733,19 @@ void FillVolumetricLightingBuffer(LightLoopContext context, uint featureFlags,
         // (in the log space) in a vein similar to Stochastic Universal Sampling:
         // https://en.wikipedia.org/wiki/Stochastic_universal_sampling
         float perPixelRandomOffset = GenerateHashedRandomFloat(posInput.positionSS);
+        // perPixelRandomOffset = GetBlueNoiseShadowJitter2D(posInput.positionSS, (uint)_VBufferSampleOffset.z).x;
+        // perPixelRandomOffset = GetBlueNoiseShadowJitterPolar(posInput.positionSS, (uint)_VBufferSampleOffset.z).x;
+        // perPixelRandomOffset *= _VolumetricShadowJitterScale;
+        // #ifdef DEBUG_OUTPUT
+        // // 输出 GetBNDSequenceSample (蓝噪声)
+        // float2 bnNoise2D = GetBlueNoiseShadowJitter2D(posInput.positionSS, (uint)_VBufferSampleOffset.z);
+        // float2 bnNoisePolar = GetBlueNoiseShadowJitterPolar(posInput.positionSS, (uint)_VBufferSampleOffset.z);
+        // _VBufferLighting[voxelCoord] = max(0, float4(bnNoise2D.xxx * _VolumetricShadowJitterScale, 1.0) * float4(GetCurrentExposureMultiplier().xxx, 1));
+        // #endif
+        
+        // #ifdef DEBUG_OUTPUT
+        // _VBufferLighting[voxelCoord] = max(0, float4(perPixelRandomOffset.xxx, 1.0) * float4(GetCurrentExposureMultiplier().xxx, 1));
+        // #endif
 
     #ifdef ENABLE_REPROJECTION
         // This is a time-based sequence of 7 equidistant numbers from 1/14 to 13/14.
@@ -671,10 +799,10 @@ void FillVolumetricLightingBuffer(LightLoopContext context, uint featureFlags,
         float4 normalizedVoxelValue = linearizedVoxelValue * rcp(dt);
         float4 normalizedBlendValue = normalizedVoxelValue;
 
-    #if (SHADEROPTIONS_CAMERA_RELATIVE_RENDERING != 0) && defined(USING_STEREO_MATRICES)
-        // With XR single-pass, remove the camera-relative offset for the reprojected sample
-        centerWS -= _WorldSpaceCameraPosViewOffset;
-    #endif
+        #if (SHADEROPTIONS_CAMERA_RELATIVE_RENDERING != 0) && defined(USING_STEREO_MATRICES)
+            // With XR single-pass, remove the camera-relative offset for the reprojected sample
+            centerWS -= _WorldSpaceCameraPosViewOffset;
+        #endif
 
         // Reproject the history at 'centerWS'.
         float4 reprojValue = SampleVBuffer(TEXTURE3D_ARGS(_VBufferHistory, s_linear_clamp_sampler),
@@ -705,33 +833,33 @@ void FillVolumetricLightingBuffer(LightLoopContext context, uint featureFlags,
         float4 linearizedBlendValue = normalizedBlendValue * dt;
         float4 blendValue = DelinearizeRGBD(linearizedBlendValue);
 
-    #ifdef ENABLE_ANISOTROPY
-        // Estimate the influence of the phase function on the results of the current frame.
-        float3 phaseCurrFrame;
+        #ifdef ENABLE_ANISOTROPY
+            // Estimate the influence of the phase function on the results of the current frame.
+            float3 phaseCurrFrame;
 
-        phaseCurrFrame.r = SafeDiv(aggregateLighting.radianceComplete.r, aggregateLighting.radianceNoPhase.r);
-        phaseCurrFrame.g = SafeDiv(aggregateLighting.radianceComplete.g, aggregateLighting.radianceNoPhase.g);
-        phaseCurrFrame.b = SafeDiv(aggregateLighting.radianceComplete.b, aggregateLighting.radianceNoPhase.b);
+            phaseCurrFrame.r = SafeDiv(aggregateLighting.radianceComplete.r, aggregateLighting.radianceNoPhase.r);
+            phaseCurrFrame.g = SafeDiv(aggregateLighting.radianceComplete.g, aggregateLighting.radianceNoPhase.g);
+            phaseCurrFrame.b = SafeDiv(aggregateLighting.radianceComplete.b, aggregateLighting.radianceNoPhase.b);
 
-        // Warning: in general, this does not work!
-        // For a voxel with a single light, 'phaseCurrFrame' is monochromatic, and since
-        // we don't jitter anisotropy, its value does not change from frame to frame
-        // for a static camera/scene. This is fine.
-        // If you have two lights per voxel, we compute:
-        // phaseCurrFrame = (phaseA * lightingA + phaseB * lightingB) / (lightingA + lightingB).
-        // 'phaseA' and 'phaseB' are still (different) constants for a static camera/scene.
-        // 'lightingA' and 'lightingB' are jittered, so they change from frame to frame.
-        // Therefore, 'phaseCurrFrame' becomes temporarily unstable and can cause flickering in practice. :-(
-        blendValue.rgb *= phaseCurrFrame;
-    #endif // ENABLE_ANISOTROPY
+            // Warning: in general, this does not work!
+            // For a voxel with a single light, 'phaseCurrFrame' is monochromatic, and since
+            // we don't jitter anisotropy, its value does not change from frame to frame
+            // for a static camera/scene. This is fine.
+            // If you have two lights per voxel, we compute:
+            // phaseCurrFrame = (phaseA * lightingA + phaseB * lightingB) / (lightingA + lightingB).
+            // 'phaseA' and 'phaseB' are still (different) constants for a static camera/scene.
+            // 'lightingA' and 'lightingB' are jittered, so they change from frame to frame.
+            // Therefore, 'phaseCurrFrame' becomes temporarily unstable and can cause flickering in practice. :-(
+            blendValue.rgb *= phaseCurrFrame;
+        #endif // ENABLE_ANISOTROPY
 
     #else // NO REPROJECTION
 
-    #ifdef ENABLE_ANISOTROPY
-        float4 blendValue = float4(aggregateLighting.radianceComplete, extinction * dt);
-    #else
-        float4 blendValue = float4(aggregateLighting.radianceNoPhase,  extinction * dt);
-    #endif // ENABLE_ANISOTROPY
+        #ifdef ENABLE_ANISOTROPY
+            float4 blendValue = float4(aggregateLighting.radianceComplete, extinction * dt);
+        #else
+            float4 blendValue = float4(aggregateLighting.radianceNoPhase,  extinction * dt);
+        #endif // ENABLE_ANISOTROPY
 
     #endif // ENABLE_REPROJECTION
 
@@ -748,6 +876,9 @@ void FillVolumetricLightingBuffer(LightLoopContext context, uint featureFlags,
         // Integral{a, b}{Transmittance(0, t) * L_s(t) dt} = Transmittance(0, a) * Integral{a, b}{Transmittance(0, t - a) * L_s(t) dt}.
         float3 probeRadiance = probeInScatteredRadiance * TransmittanceIntegralHomogeneousMedium(extinction, dt);
 
+        // #ifdef DEBUG_OUTPUT
+        // _VBufferLighting[voxelCoord] = max(0, float4(phase.xxx, 1.0)  * float4(GetCurrentExposureMultiplier().xxx, 1));
+        // #endif
         // Accumulate radiance along the ray.
         totalRadiance += transmittance * scattering * (phase * blendValue.rgb + probeRadiance);
 
@@ -759,8 +890,9 @@ void FillVolumetricLightingBuffer(LightLoopContext context, uint featureFlags,
         // This means storing the tone mapped radiance and transmittance instead of optical depth.
         // See "A Fresh Look at Generalized Sampling", p. 51.
         // TODO: re-enable tone mapping after implementing pre-exposure.
+        #ifndef DEBUG_OUTPUT
         _VBufferLighting[voxelCoord] = max(0, LinearizeRGBD(float4(/*FastTonemap*/(totalRadiance), opticalDepth)) * float4(GetCurrentExposureMultiplier().xxx, 1));
-
+        #endif
         // Compute the optical depth up to the end of the interval.
         opticalDepth += 0.5 * blendValue.a;
 

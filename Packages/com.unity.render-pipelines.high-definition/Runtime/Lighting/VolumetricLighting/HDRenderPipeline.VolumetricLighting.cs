@@ -479,10 +479,23 @@ namespace UnityEngine.Rendering.HighDefinition
                 hdCamera.vBufferParams[prevIdx] = currentParams;
             }
 
-            // Update size used to create volumetric buffers.
-            s_CurrentVolumetricBufferSize = new Vector3Int(Math.Max(s_CurrentVolumetricBufferSize.x, currentParams.viewportSize.x),
-                Math.Max(s_CurrentVolumetricBufferSize.y, currentParams.viewportSize.y),
-                Math.Max(s_CurrentVolumetricBufferSize.z, currentParams.viewportSize.z));
+            bool needResize = (s_CurrentVolumetricBufferSize.x < currentParams.viewportSize.x) ||
+                              (s_CurrentVolumetricBufferSize.y < currentParams.viewportSize.y) ||
+                              (s_CurrentVolumetricBufferSize.z < currentParams.viewportSize.z);
+            if (needResize)
+            {
+                // Update size used to create volumetric buffers.
+                s_CurrentVolumetricBufferSize = new Vector3Int(Math.Max(s_CurrentVolumetricBufferSize.x, currentParams.viewportSize.x),
+                    Math.Max(s_CurrentVolumetricBufferSize.y, currentParams.viewportSize.y),
+                    Math.Max(s_CurrentVolumetricBufferSize.z, currentParams.viewportSize.z));
+            }
+            else
+            {
+                // Update size used to create volumetric buffers.
+                s_CurrentVolumetricBufferSize = new Vector3Int(Math.Min(s_CurrentVolumetricBufferSize.x, currentParams.viewportSize.x),
+                    Math.Min(s_CurrentVolumetricBufferSize.y, currentParams.viewportSize.y),
+                    Math.Min(s_CurrentVolumetricBufferSize.z, currentParams.viewportSize.z));
+            }
         }
 
         // Do not access 'rt.name', it allocates memory every time...
@@ -494,16 +507,26 @@ namespace UnityEngine.Rendering.HighDefinition
             int width = rt.rt.width;
             int height = rt.rt.height;
             int depth = rt.rt.volumeDepth;
-
+            
+            bool needResize = (width != viewportWidth) || (height != viewportHeight) || (depth != viewportDepth);
             bool realloc = (width < viewportWidth) || (height < viewportHeight) || (depth < viewportDepth);
 
-            if (realloc)
+            if (needResize)
             {
                 RTHandles.Release(rt);
 
-                width = Math.Max(width, viewportWidth);
-                height = Math.Max(height, viewportHeight);
-                depth = Math.Max(depth, viewportDepth);
+                if (realloc)
+                {
+                    width = Math.Max(width, viewportWidth);
+                    height = Math.Max(height, viewportHeight);
+                    depth = Math.Max(depth, viewportDepth);
+                }
+                else
+                {
+                    width = Math.Min(width, viewportWidth);
+                    height = Math.Min(height, viewportHeight);
+                    depth = Math.Min(depth, viewportDepth);
+                }
 
                 rt = RTHandles.Alloc(width, height, depth, colorFormat: GraphicsFormat.R16G16B16A16_SFloat, // 8888_sRGB is not precise enough
                     dimension: TextureDimension.Tex3D, enableRandomWrite: true, name: name);
@@ -1308,6 +1331,9 @@ namespace UnityEngine.Rendering.HighDefinition
             public BufferHandle waterCameraHeight;
             public TextureHandle waterStencil;
             public RenderTargetIdentifier causticsBuffer;
+
+            // Blue Noise shadow dithering
+            public float volumetricShadowJitterScale;
         }
 
         TextureHandle VolumetricLightingPass(RenderGraph renderGraph, HDCamera hdCamera, TextureHandle depthTexture, TextureHandle densityBuffer,
@@ -1388,6 +1414,10 @@ namespace UnityEngine.Rendering.HighDefinition
 
                     passData.volumetricAmbientProbeBuffer = m_SkyManager.GetVolumetricAmbientProbeBuffer(hdCamera);
 
+                    // Blue Noise shadow dithering scale - read from Fog volume
+                    // This controls the spatial jitter range for shadow sampling
+                    passData.volumetricShadowJitterScale = fog.volumetricShadowJitterScale.value;
+
                     // Water stuff
                     if (passData.water)
                     {
@@ -1405,6 +1435,9 @@ namespace UnityEngine.Rendering.HighDefinition
                         {
                             if (data.tiledLighting)
                                 ctx.cmd.SetComputeBufferParam(data.volumetricLightingCS, data.volumetricLightingKernel, HDShaderIDs.g_vBigTileLightList, data.bigTileVolumetricLightListBuffer);
+
+                            // Bind Blue Noise shadow dithering parameter
+                            ctx.cmd.SetComputeFloatParam(data.volumetricLightingCS, HDShaderIDs._VolumetricShadowJitterScale, data.volumetricShadowJitterScale);
 
                             ctx.cmd.SetComputeTextureParam(data.volumetricLightingCS, data.volumetricLightingKernel, HDShaderIDs._MaxZMaskTexture, data.maxZBuffer);  // Read
 

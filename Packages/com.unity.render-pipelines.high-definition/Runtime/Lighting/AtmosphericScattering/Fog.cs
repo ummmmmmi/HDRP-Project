@@ -157,6 +157,16 @@ namespace UnityEngine.Rendering.HighDefinition
         [Tooltip("When enabled, HDRP only includes directional Lights when it evaluates volumetric fog.")]
         public BoolParameter directionalLightsOnly = new BoolParameter(false);
 
+        /// <summary>
+        /// Controls the Blue Noise shadow dithering scale for volumetric fog shadow sampling.
+        /// A value of 0 means no dithering, value of 1 equals ~1 shadow map texel of jitter.
+        /// Higher values create softer shadow edges but require temporal accumulation to converge.
+        /// Recommended range: 0.5-2.0 for best results with temporal reprojection enabled.
+        /// </summary>
+        [AdditionalProperty]
+        [Tooltip("Controls shadow softness via Blue Noise dithering. 0 = sharp, 1 = ~1 texel jitter. Relies on temporal reprojection for convergence.")]
+        public ClampedFloatParameter volumetricShadowJitterScale = new ClampedFloatParameter(1.0f, 0.0f, 4.0f);
+
         internal static bool IsFogEnabled(HDCamera hdCamera)
         {
             return hdCamera.frameSettings.IsEnabled(FrameSettingsField.AtmosphericScattering) && hdCamera.volumeStack.GetComponent<Fog>().enabled.value;

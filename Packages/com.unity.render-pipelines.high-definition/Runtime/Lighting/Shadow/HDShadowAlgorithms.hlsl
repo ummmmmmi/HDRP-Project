@@ -398,6 +398,66 @@ float EvalShadow_CascadedDepth_Dither(inout HDShadowContext shadowContext, Textu
     return EvalShadow_CascadedDepth_Dither_SplitIndex(shadowContext, tex, samp, positionSS, positionWS, normalWS, index, L, unusedSplitIndex);
 }
 
+// 带Blue Noise抖动的方向光阴影采样（用于Volumetric Lighting）
+float EvalShadow_CascadedDepth_Dither_BlueNoise(inout HDShadowContext shadowContext, Texture2D tex, SamplerComparisonState samp, float2 positionSS, float3 positionWS, float3 normalWS, int index, float3 L, float2 jitterOffset)
+{
+    float   alpha;
+    int     cascadeCount;
+    float   shadow = 1.0;
+    int     shadowSplitIndex = EvalShadow_GetSplitIndex(shadowContext, index, positionWS, alpha, cascadeCount);
+#ifdef SHADOWS_SHADOWMASK
+    shadowContext.shadowSplitIndex = shadowSplitIndex;
+    shadowContext.fade = alpha;
+#endif
+
+    // Forcing the alpha to zero allows us to avoid the dithering as it requires the screen space position and an additional
+    // shadow read wich can be avoided in this case.
+#if defined(SHADER_STAGE_RAY_TRACING)
+    alpha = 0.0;
+#endif
+
+    float3 basePositionWS = positionWS;
+
+    if (shadowSplitIndex >= 0.0)
+    {
+        HDShadowData sd = shadowContext.shadowDatas[index];
+        LoadDirectionalShadowDatas(sd, shadowContext, index + shadowSplitIndex);
+        positionWS = basePositionWS + sd.cacheTranslationDelta.xyz;
+
+        /* normal based bias */
+        float worldTexelSize = sd.worldTexelSize;
+        float3 normalBias = EvalShadow_NormalBiasOrtho(worldTexelSize, sd.normalBias, normalWS);
+
+        /* We select what split we need to sample from */
+        float nextSplit = min(shadowSplitIndex + 1, cascadeCount - 1);
+        // 使用传入的 jitterOffset 替代 InterleavedGradientNoise 进行级联选择
+        float jitterValue = (jitterOffset.x + jitterOffset.y) * 0.5 + 0.5; // 转换到 [0,1] 范围
+        bool evalNextCascade = nextSplit != shadowSplitIndex && alpha > 0 && step(jitterValue, alpha);
+
+        if (evalNextCascade)
+        {
+            LoadDirectionalShadowDatas(sd, shadowContext, index + nextSplit);
+            positionWS = basePositionWS + sd.cacheTranslationDelta.xyz;
+            float biasModifier = (sd.worldTexelSize / worldTexelSize);
+            normalBias *= biasModifier;
+        }
+
+        positionWS += normalBias;
+        float3 posTC = EvalShadow_GetTexcoordsAtlas(sd, _CascadeShadowAtlasSize.zw, positionWS, false);
+
+        // Apply Blue Noise jitter to shadow texture coordinates
+        // jitterOffset range is approx [-1, 1], multiplied by _CascadeShadowAtlasSize.zw (1/texSize)
+        // This results in ~1 texel offset per unit of jitterScale
+        // The effect relies on temporal accumulation (reprojection) to converge over multiple frames
+        posTC.xy += jitterOffset * _CascadeShadowAtlasSize.zw;
+
+        shadow = DIRECTIONAL_FILTER_ALGORITHM(sd, positionSS, posTC, tex, samp, FIXED_UNIFORM_BIAS);
+        shadow = (shadowSplitIndex < cascadeCount - 1) ? shadow : lerp(shadow, 1.0, alpha);
+    }
+
+    return shadow;
+}
+
 // TODO: optimize this using LinearEyeDepth() to avoid having to pass the shadowToWorld matrix
 float EvalShadow_SampleClosestDistance_Punctual(HDShadowData sd, Texture2D tex, SamplerState sampl, float3 positionWS, float3 L, float3 lightPositionWS, bool perspective)
 {

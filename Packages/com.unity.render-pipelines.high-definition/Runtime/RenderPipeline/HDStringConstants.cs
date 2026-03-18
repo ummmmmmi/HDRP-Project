@@ -691,6 +691,7 @@ namespace UnityEngine.Rendering.HighDefinition
 
         public static readonly int _MaxZMaskTexture = Shader.PropertyToID("_MaxZMaskTexture");
         public static readonly int _DilationWidth = Shader.PropertyToID("_DilationWidth");
+        public static readonly int _VolumetricShadowJitterScale = Shader.PropertyToID("_VolumetricShadowJitterScale");
 
         public static readonly int _GroundIrradianceTexture = Shader.PropertyToID("_GroundIrradianceTexture");
         public static readonly int _GroundIrradianceTable = Shader.PropertyToID("_GroundIrradianceTable");
