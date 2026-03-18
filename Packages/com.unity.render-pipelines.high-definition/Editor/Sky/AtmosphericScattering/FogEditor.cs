@@ -34,6 +34,7 @@ namespace UnityEditor.Rendering.HighDefinition
         protected SerializedDataParameter m_ResolutionDepthRatio;
         protected SerializedDataParameter m_DirectionalLightsOnly;
         protected SerializedDataParameter m_DenoisingMode;
+        protected SerializedDataParameter m_VolumetricShadowJitterScale;
 
         static GUIContent s_Enabled = new GUIContent("State", "When set to Enabled, HDRP renders fog in your scene.");
         static GUIContent s_AlbedoLabel = new GUIContent("Albedo", "Specifies the color this fog scatters light to.");
@@ -43,6 +44,7 @@ namespace UnityEditor.Rendering.HighDefinition
         static GUIContent s_GlobalLightProbeDimmerLabel = new GUIContent("GI Dimmer", "Controls the intensity reduction of the global illumination contribution to volumetric fog. This is either APV (if enabled and present) or the global light probe that the sky produces.");
         static GUIContent s_EnableVolumetricFog = new GUIContent("Volumetric Fog", "When enabled, activates volumetric fog.");
         static GUIContent s_DepthExtentLabel = new GUIContent("Volumetric Fog Distance", "Sets the distance (in meters) from the Camera's Near Clipping Plane to the back of the Camera's volumetric lighting buffer. The lower the distance is, the higher the fog quality is.");
+        static GUIContent s_VolumetricShadowJitterScaleLabel = new GUIContent("Shadow Jitter Scale", "Controls the Blue Noise shadow dithering scale for volumetric fog. Higher values increase the shadow sampling jitter range, which can help reduce shadow aliasing.");
 
         public override void OnEnable()
         {
@@ -76,6 +78,7 @@ namespace UnityEditor.Rendering.HighDefinition
             m_ResolutionDepthRatio = Unpack(o.Find(x => x.resolutionDepthRatio));
             m_DirectionalLightsOnly = Unpack(o.Find(x => x.directionalLightsOnly));
             m_DenoisingMode = Unpack(o.Find(x => x.denoisingMode));
+            m_VolumetricShadowJitterScale = Unpack(o.Find(x => x.volumetricShadowJitterScale));
 
             base.OnEnable();
         }
@@ -159,6 +162,8 @@ namespace UnityEditor.Rendering.HighDefinition
                     }
 
                     PropertyField(m_DirectionalLightsOnly);
+
+                    PropertyField(m_VolumetricShadowJitterScale, s_VolumetricShadowJitterScaleLabel);
 
                     PropertyField(m_Anisotropy);
                     if (m_Anisotropy.value.floatValue != 0.0f)
