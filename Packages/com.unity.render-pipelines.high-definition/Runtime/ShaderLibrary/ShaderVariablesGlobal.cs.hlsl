@@ -77,6 +77,10 @@ GLOBAL_CBUFFER_START(ShaderVariablesGlobal, b0)
     float _VBufferRcpSliceCount;
     float _VBufferRcpInstancedViewCount;
     float _VBufferLastSliceDist;
+    float _VBufferDitherIntensity;
+    uint _UseIGNDither;
+    float _VBufferDitherColorIntensity;
+    float _VBufferUnused0;
     float4 _ShadowAtlasSize;
     float4 _CascadeShadowAtlasSize;
     float4 _AreaShadowAtlasSize;

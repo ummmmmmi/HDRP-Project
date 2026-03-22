@@ -167,6 +167,33 @@ namespace UnityEngine.Rendering.HighDefinition
         [Tooltip("Controls shadow softness via Blue Noise dithering. 0 = sharp, 1 = ~1 texel jitter. Relies on temporal reprojection for convergence.")]
         public ClampedFloatParameter volumetricShadowJitterScale = new ClampedFloatParameter(1.0f, 0.0f, 4.0f);
 
+        /// <summary>
+        /// When enabled, uses Interleaved Gradient Noise (IGN) instead of Blue Noise for dithering.
+        /// IGN can provide better temporal stability in some cases but may show more structured patterns.
+        /// </summary>
+        [AdditionalProperty]
+        [Tooltip("Use Interleaved Gradient Noise instead of Blue Noise for dithering. IGN can provide better temporal stability.")]
+        public BoolParameter useIGNDither = new BoolParameter(false);
+
+        /// <summary>
+        /// Controls the Blue Noise dithering intensity for volumetric fog depth sampling.
+        /// A value of 0 means no dithering, higher values create more visible temporal noise patterns
+        /// that help reduce banding artifacts in the volumetric fog buffer.
+        /// Recommended range: 0.5-2.0. Higher values may require temporal accumulation to converge.
+        /// </summary>
+        [AdditionalProperty]
+        [Tooltip("Controls depth sampling dithering intensity. 0 = no dithering, 1.5 = default. Higher values reduce banding but may require temporal accumulation.")]
+        public ClampedFloatParameter volumetricSamplingJitterScale = new ClampedFloatParameter(1.5f, 0.0f, 5.0f);
+
+        /// <summary>
+        /// Controls the dithering intensity for color quantization banding reduction.
+        /// Higher values add more noise to break color banding but may require temporal accumulation.
+        /// Recommended range: 0.5-2.0. Set to 0 to disable color dithering.
+        /// </summary>
+        [AdditionalProperty]
+        [Tooltip("Controls color dithering intensity to break quantization banding. 0 = disabled, 1 = default.")]
+        public ClampedFloatParameter volumetricColorDitherIntensity = new ClampedFloatParameter(1.0f, 0.0f, 5.0f);
+
         internal static bool IsFogEnabled(HDCamera hdCamera)
         {
             return hdCamera.frameSettings.IsEnabled(FrameSettingsField.AtmosphericScattering) && hdCamera.volumeStack.GetComponent<Fog>().enabled.value;
@@ -274,7 +301,10 @@ namespace UnityEngine.Rendering.HighDefinition
             cb._HeightFogBaseHeight = crBaseHeight;
             cb._GlobalFogAnisotropy = anisotropy.value;
             cb._VolumetricFilteringEnabled = ((int)denoisingMode.value & (int)FogDenoisingMode.Gaussian) != 0 ? 1 : 0;
+            // cb._VolumetricFilteringEnabled = 1;
             cb._FogDirectionalOnly = directionalLightsOnly.value ? 1 : 0;
+            cb._UseIGNDither = useIGNDither.value ? 1u : 0u;
+            cb._VBufferDitherColorIntensity = volumetricColorDitherIntensity.value;
         }
     }
 

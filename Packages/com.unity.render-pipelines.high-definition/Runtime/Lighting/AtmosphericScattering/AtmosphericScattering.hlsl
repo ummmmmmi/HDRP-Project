@@ -12,6 +12,8 @@
 #include "Packages/com.unity.render-pipelines.high-definition/Runtime/Sky/PhysicallyBasedSky/PhysicallyBasedSkyEvaluation.hlsl"
 #include "Packages/com.unity.render-pipelines.high-definition/Runtime/Water/Shaders/UnderWaterUtilities.hlsl"
 
+#include "Packages/com.unity.render-pipelines.high-definition/Runtime/RenderPipeline/Raytracing/Shaders/RaytracingSampling.hlsl"
+
 #ifdef DEBUG_DISPLAY
 #include "Packages/com.unity.render-pipelines.high-definition/Runtime/Debug/DebugDisplay.hlsl"
 #endif
@@ -237,6 +239,14 @@ float3 GetViewForwardDir1(float4x4 viewMatrix)
     return -viewMatrix[2].xyz;
 }
 
+float remap_tri(float x)
+{
+    float orig = x * 2.0f - 1.0f;
+    x = max(-1.0f, orig / sqrt(abs(orig)));
+    x = x - sign(orig) + 0.5f;
+    return -x;
+}
+
 // Returns false when fog is not applied
 bool EvaluateAtmosphericScattering(PositionInputs posInput, float3 V, out float3 color, out float3 opacity)
 {
@@ -284,27 +294,113 @@ bool EvaluateAtmosphericScattering(PositionInputs posInput, float3 V, out float3
 
         if (_EnableVolumetricFog != 0)
         {
+            float blueNoiseX, blueNoiseY;
+            float2 blueNoiseXY = 0.0f;
+            if (_UseIGNDither)
+            {
+                float jitterAngle = InterleavedGradientNoise(posInput.positionSS.xy, uint(_FrameCount)) * 2.0 * PI;
+                float jitterRadius = InterleavedGradientNoise(posInput.positionSS.xy + float2(127.1, 311.7), uint(_FrameCount));
+                blueNoiseXY = float2(sin(jitterAngle), cos(jitterAngle)) * jitterRadius;
+            }
+            else
+            {
+                // Generate blue noise for dithering
+                blueNoiseX = GetBNDSequenceSample(posInput.positionSS.xy, uint(_FrameCount) & 255, 0);
+                blueNoiseY = GetBNDSequenceSample(posInput.positionSS.xy, uint(_FrameCount) & 255, 1);
+                // blueNoiseX = remap_tri(blueNoiseX);
+                // blueNoiseY = remap_tri(blueNoiseY);
+                // float2 blueNoiseXY = float2(blueNoiseX, blueNoiseY) - 0.5f;
+                // float2 blueNoiseXY = sqrt(float2(blueNoiseX, blueNoiseY)) * 2 - 1;
+                blueNoiseXY = float2(blueNoiseX, blueNoiseY) * 2 - 1;
+            }
+
+            float ditherIntensity = _VBufferDitherIntensity;
+
+            float2 uvOffset = blueNoiseXY * _VBufferRcpSliceCount * ditherIntensity;
+            float depthOffset = blueNoiseXY.x * _VBufferRcpSliceCount * ditherIntensity;
+                
             bool doBiquadraticReconstruction = _VolumetricFilteringEnabled == 0; // Only if filtering is disabled.
             float4 value = SampleVBuffer(TEXTURE3D_ARGS(_VBufferLighting, s_linear_clamp_sampler),
-                                         posInput.positionNDC,
+                                         posInput.positionNDC + uvOffset,
                                          tFrag,
                                          _VBufferViewportSize,
                                          _VBufferLightingViewportScale.xyz,
                                          _VBufferLightingViewportLimit.xyz,
                                          _VBufferDistanceEncodingParams,
                                          _VBufferDistanceDecodingParams,
-                                         true, doBiquadraticReconstruction, false);
+                                         true, doBiquadraticReconstruction, false,
+                                         depthOffset);
 
+            // Color dithering to break quantization banding based on dynamic range
+            // Half-float quantization step varies with magnitude
+            float maxColor = Max3(value.r, value.g, value.b);
+
+            // Precomputed quantization steps for different ranges
+            // Index based on floor(log2(max(1, maxColor))) + 1
+            static const float kHalfFloatQuantSteps[8] = {
+                0.00048828125,  // 2^-11 for [0, 1)
+                0.0009765625,   // 2^-10 for [1, 2)
+                0.001953125,    // 2^-9  for [2, 4)
+                0.00390625,     // 2^-8  for [4, 8)
+                0.0078125,      // 2^-7  for [8, 16)
+                0.015625,       // 2^-6  for [16, 32)
+                0.03125,        // 2^-5  for [32, 64)
+                0.0625          // 2^-4  for [64, 128)
+            };
+
+            uint rangeIndex = (maxColor > 0.0f) ? clamp(uint(floor(log2(max(1.0f, maxColor)))) + 1, 0, 7) : 0;
+            float quantStep = kHalfFloatQuantSteps[rangeIndex];
+
+            float blueNoiseR, blueNoiseG, blueNoiseB;
+
+            if (_UseIGNDither)
+            {
+                // 第一次IGN生成2个正交值
+                float jitterAngle1 = InterleavedGradientNoise(posInput.positionSS.xy, uint(_FrameCount)) * 2.0 * PI;
+                blueNoiseR = 0.5 + 0.5 * sin(jitterAngle1);
+                blueNoiseG = 0.5 + 0.5 * cos(jitterAngle1);
+
+                // 第二次IGN（加偏移）生成第3个值
+                float2 offset = float2(127.1, 311.7);
+                blueNoiseB = InterleavedGradientNoise(posInput.positionSS.xy + offset, uint(_FrameCount));
+            }
+            else
+            {
+                // Generate blue noise for color dithering using triangular distribution
+                blueNoiseR = GetBNDSequenceSample(posInput.positionSS.xy, uint(_FrameCount) & 255, 2);
+                blueNoiseG = GetBNDSequenceSample(posInput.positionSS.xy, uint(_FrameCount) & 255, 3);
+                blueNoiseB = GetBNDSequenceSample(posInput.positionSS.xy, uint(_FrameCount) & 255, 4);
+            }
+
+            float3 colorDither = float3(
+                remap_tri(blueNoiseR),
+                remap_tri(blueNoiseG),
+                remap_tri(blueNoiseB)
+            ) + 0.24;
+
+            // float3 colorDither = float3(
+            //     (blueNoiseR),
+            //     (blueNoiseG),
+            //     (blueNoiseB)
+            // );
+
+            float ditherColorIntensity = _VBufferDitherColorIntensity;
+
+            // Use perceptual noise scale: noise proportional to color intensity (Weber's law)
+            // Base noise ~0.5-2% of color value for visible banding reduction
+            // Also scale by quantStep for HDR ranges
+            float perceptualNoiseScale = max(0.01, maxColor * 0.01); // ~1% of color value, minimum 0.01
+            perceptualNoiseScale = 1.0f / 255.0f;
+            value.rgb += colorDither * quantStep * 100 * ditherColorIntensity;
             
-            // TODO: add some slowly animated noise (dither?) to the reconstructed value.
             // TODO: re-enable tone mapping after implementing pre-exposure.
             volFog = DelinearizeRGBA(float4(/*FastTonemapInvert*/(value.rgb), value.a));
             volFogEnd = _VBufferLastSliceDist;
 
             // debug
-            color = volFog;
-            opacity = 1.0f;
-            return true;
+            // color = volFog;
+            // opacity = 1.0f;
+            // return true;
         }
 
         float distDelta = tFrag - volFogEnd;

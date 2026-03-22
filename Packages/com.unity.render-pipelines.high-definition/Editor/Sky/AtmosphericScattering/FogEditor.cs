@@ -35,6 +35,9 @@ namespace UnityEditor.Rendering.HighDefinition
         protected SerializedDataParameter m_DirectionalLightsOnly;
         protected SerializedDataParameter m_DenoisingMode;
         protected SerializedDataParameter m_VolumetricShadowJitterScale;
+        protected SerializedDataParameter m_VolumetricSamplingUseIGN;
+        protected SerializedDataParameter m_VolumetricSamplingJitterScale;
+        protected SerializedDataParameter m_VolumetricSamplingJitterColorScale;
 
         static GUIContent s_Enabled = new GUIContent("State", "When set to Enabled, HDRP renders fog in your scene.");
         static GUIContent s_AlbedoLabel = new GUIContent("Albedo", "Specifies the color this fog scatters light to.");
@@ -45,6 +48,9 @@ namespace UnityEditor.Rendering.HighDefinition
         static GUIContent s_EnableVolumetricFog = new GUIContent("Volumetric Fog", "When enabled, activates volumetric fog.");
         static GUIContent s_DepthExtentLabel = new GUIContent("Volumetric Fog Distance", "Sets the distance (in meters) from the Camera's Near Clipping Plane to the back of the Camera's volumetric lighting buffer. The lower the distance is, the higher the fog quality is.");
         static GUIContent s_VolumetricShadowJitterScaleLabel = new GUIContent("Shadow Jitter Scale", "Controls the Blue Noise shadow dithering scale for volumetric fog. Higher values increase the shadow sampling jitter range, which can help reduce shadow aliasing.");
+        static GUIContent s_VolumetricSamplingUseIGNLabel = new GUIContent("Sampling Jitter UseIGN", "Controls the Blue Noise dithering intensity for volumetric fog depth sampling. Higher values create more visible temporal noise patterns that help reduce banding artifacts in the volumetric fog buffer.");
+        static GUIContent s_VolumetricSamplingJitterScaleLabel = new GUIContent("Sampling Jitter Scale", "Controls the Blue Noise dithering intensity for volumetric fog depth sampling. Higher values create more visible temporal noise patterns that help reduce banding artifacts in the volumetric fog buffer.");
+        static GUIContent s_VolumetricSamplingJitterColorScaleLabel = new GUIContent("Sampling Jitter Color Scale", "Controls the Blue Noise dithering intensity for volumetric fog depth sampling. Higher values create more visible temporal noise patterns that help reduce banding artifacts in the volumetric fog buffer.");
 
         public override void OnEnable()
         {
@@ -79,6 +85,9 @@ namespace UnityEditor.Rendering.HighDefinition
             m_DirectionalLightsOnly = Unpack(o.Find(x => x.directionalLightsOnly));
             m_DenoisingMode = Unpack(o.Find(x => x.denoisingMode));
             m_VolumetricShadowJitterScale = Unpack(o.Find(x => x.volumetricShadowJitterScale));
+            m_VolumetricSamplingUseIGN = Unpack(o.Find(x => x.useIGNDither));
+            m_VolumetricSamplingJitterScale = Unpack(o.Find(x => x.volumetricSamplingJitterScale));
+            m_VolumetricSamplingJitterColorScale = Unpack(o.Find(x => x.volumetricColorDitherIntensity));
 
             base.OnEnable();
         }
@@ -164,6 +173,9 @@ namespace UnityEditor.Rendering.HighDefinition
                     PropertyField(m_DirectionalLightsOnly);
 
                     PropertyField(m_VolumetricShadowJitterScale, s_VolumetricShadowJitterScaleLabel);
+                    PropertyField(m_VolumetricSamplingUseIGN, s_VolumetricSamplingUseIGNLabel);
+                    PropertyField(m_VolumetricSamplingJitterScale, s_VolumetricSamplingJitterScaleLabel);
+                    PropertyField(m_VolumetricSamplingJitterColorScale, s_VolumetricSamplingJitterColorScaleLabel);
 
                     PropertyField(m_Anisotropy);
                     if (m_Anisotropy.value.floatValue != 0.0f)

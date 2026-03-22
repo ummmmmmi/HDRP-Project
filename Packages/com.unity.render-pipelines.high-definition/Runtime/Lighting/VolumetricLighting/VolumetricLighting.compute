@@ -18,12 +18,8 @@
 // DEBUG
 // 0 正常效果
 // 1 输出该模块的调试
-#define DEBUG_OUTPUT               0
-#define DEBUG_OUTPUT_NONE          0
-#define DEBUG_OUTPUT_SHADOW        1
-#define DEBUG_OUTPUT_DENSITY       2
-#define DEBUG_OUTPUT_LIGHTING      3
-#define DEBUG_OUTPUT_NOISE         4
+// #define DEBUG_OUTPUT               0
+
 
 // Don't want contact shadows
 #define LIGHT_EVALUATION_NO_CONTACT_SHADOWS // To define before LightEvaluation.hlsl
@@ -187,8 +183,19 @@ float2 GetBlueNoiseShadowJitterPolar(uint2 pixelCoord, uint frameIndex)
     return float2(cos(angle), sin(angle)) * radius;
 }
 
+float remap_tri(float x)
+{
+    float orig = x * 2.0f - 1.0f;
+    x = max(-1.0f, orig / sqrt(abs(orig)));
+    x = x - sign(orig) + 0.5f;
+    return -x;
+}
+
 // Blue Noise 阴影抖动参数（由 C# 端设置）
 float _VolumetricShadowJitterScale;
+
+// Blue Noise 采样抖动参数（由 C# 端设置）
+float _VolumetricSamplingJitterScale;
 
 // 带空间抖动的方向光阴影采样（使用 BND Sequence）
 real GetDirectionalShadowAttenuationWithBlueNoise(
@@ -733,20 +740,17 @@ void FillVolumetricLightingBuffer(LightLoopContext context, uint featureFlags,
         // (in the log space) in a vein similar to Stochastic Universal Sampling:
         // https://en.wikipedia.org/wiki/Stochastic_universal_sampling
         float perPixelRandomOffset = GenerateHashedRandomFloat(posInput.positionSS);
+        // perPixelRandomOffset = GetBNDSequenceSample(posInput.positionSS, (uint)_VBufferSampleOffset.z & 255, 0);
         // perPixelRandomOffset = GetBlueNoiseShadowJitter2D(posInput.positionSS, (uint)_VBufferSampleOffset.z).x;
-        perPixelRandomOffset = InterleavedGradientNoise(posInput.positionSS, (uint)_VBufferSampleOffset.z);
+        // perPixelRandomOffset = InterleavedGradientNoise(posInput.positionSS, (uint)_VBufferSampleOffset.z);
+        // perPixelRandomOffset = remap_tri(perPixelRandomOffset) - 0.5;
         // perPixelRandomOffset = GetBlueNoiseShadowJitterPolar(posInput.positionSS, (uint)_VBufferSampleOffset.z).x;
         perPixelRandomOffset *= _VolumetricShadowJitterScale;
-        // #ifdef DEBUG_OUTPUT
-        // // 输出 GetBNDSequenceSample (蓝噪声)
-        // float2 bnNoise2D = GetBlueNoiseShadowJitter2D(posInput.positionSS, (uint)_VBufferSampleOffset.z);
-        // float2 bnNoisePolar = GetBlueNoiseShadowJitterPolar(posInput.positionSS, (uint)_VBufferSampleOffset.z);
-        // _VBufferLighting[voxelCoord] = max(0, float4(bnNoise2D.xxx * _VolumetricShadowJitterScale, 1.0) * float4(GetCurrentExposureMultiplier().xxx, 1));
-        // #endif
+
         
-        #ifdef DEBUG_OUTPUT
-        _VBufferLighting[voxelCoord] = max(0, float4(perPixelRandomOffset.xxx, 1.0) * float4(GetCurrentExposureMultiplier().xxx, 1));
-        #endif
+        // #ifdef DEBUG_OUTPUT
+        // _VBufferLighting[voxelCoord] = max(0, float4(perPixelRandomOffset.xxx, 1.0) * float4(GetCurrentExposureMultiplier().xxx, 1));
+        // #endif
 
     #ifdef ENABLE_REPROJECTION
         // This is a time-based sequence of 7 equidistant numbers from 1/14 to 13/14.
@@ -877,9 +881,10 @@ void FillVolumetricLightingBuffer(LightLoopContext context, uint featureFlags,
         // Integral{a, b}{Transmittance(0, t) * L_s(t) dt} = Transmittance(0, a) * Integral{a, b}{Transmittance(0, t - a) * L_s(t) dt}.
         float3 probeRadiance = probeInScatteredRadiance * TransmittanceIntegralHomogeneousMedium(extinction, dt);
 
-        // #ifdef DEBUG_OUTPUT
-        // _VBufferLighting[voxelCoord] = max(0, float4(phase.xxx, 1.0)  * float4(GetCurrentExposureMultiplier().xxx, 1));
-        // #endif
+        #ifdef DEBUG_OUTPUT
+        _VBufferLighting[voxelCoord] = max(0, float4(phase * blendValue.rgb, 1.0)  * float4(GetCurrentExposureMultiplier().xxx, 1));
+        // _VBufferLighting[voxelCoord] = max(0, float4(scattering.xxx, 1.0)  * float4(GetCurrentExposureMultiplier().xxx, 1));
+        #endif
         // Accumulate radiance along the ray.
         totalRadiance += transmittance * scattering * (phase * blendValue.rgb + probeRadiance);
 

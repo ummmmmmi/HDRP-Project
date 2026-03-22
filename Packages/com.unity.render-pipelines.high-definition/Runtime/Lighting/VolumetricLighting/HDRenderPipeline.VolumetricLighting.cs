@@ -84,7 +84,7 @@ namespace UnityEngine.Rendering.HighDefinition
 
         public uint _VolumeCount;
         public uint _IsObliqueProjectionMatrix;
-        public uint _Padding1;
+        public float _VBufferDitherIntensity;  // Reuse padding slot for dither intensity
         public uint _Padding2;
     }
 
@@ -838,6 +838,7 @@ namespace UnityEngine.Rendering.HighDefinition
             cb._VBufferSliceCount = sliceCount;
             cb._FogGIDimmer = fog.globalLightProbeDimmer.value;
             cb._VBufferRcpSliceCount = 1.0f / sliceCount;
+            cb._VBufferDitherIntensity = fog.volumetricSamplingJitterScale.value;
             cb._VBufferLightingViewportScale = currParams.ComputeViewportScale(s_CurrentVolumetricBufferSize);
             cb._VBufferLightingViewportLimit = currParams.ComputeViewportLimit(s_CurrentVolumetricBufferSize);
             cb._VBufferDistanceEncodingParams = currParams.depthEncodingParams;
@@ -1334,6 +1335,7 @@ namespace UnityEngine.Rendering.HighDefinition
 
             // Blue Noise shadow dithering
             public float volumetricShadowJitterScale;
+            public float volumetricSamplingJitterScale;
             public BlueNoise.DitheredTextureSet ditheredTextureSet;
         }
 
@@ -1419,6 +1421,10 @@ namespace UnityEngine.Rendering.HighDefinition
                     // This controls the spatial jitter range for shadow sampling
                     passData.volumetricShadowJitterScale = fog.volumetricShadowJitterScale.value;
 
+                    // Blue Noise sampling dithering intensity - read from Fog volume
+                    // This controls the depth sampling jitter range for volumetric fog
+                    passData.volumetricSamplingJitterScale = fog.volumetricSamplingJitterScale.value;
+
                     // Get Blue Noise textures for BND Sequence sampling
                     BlueNoise blueNoise = GetBlueNoiseManager();
                     passData.ditheredTextureSet = blueNoise.DitheredTextureSet8SPP();
@@ -1443,6 +1449,9 @@ namespace UnityEngine.Rendering.HighDefinition
 
                             // Bind Blue Noise shadow dithering parameter
                             ctx.cmd.SetComputeFloatParam(data.volumetricLightingCS, HDShaderIDs._VolumetricShadowJitterScale, data.volumetricShadowJitterScale);
+
+                            // Bind Blue Noise sampling dithering parameter
+                            ctx.cmd.SetComputeFloatParam(data.volumetricLightingCS, HDShaderIDs._VolumetricSamplingJitterScale, data.volumetricSamplingJitterScale);
 
                             // Bind Blue Noise textures for BND Sequence sampling
                             BlueNoise.BindDitheredTextureSet(ctx.cmd, data.ditheredTextureSet);

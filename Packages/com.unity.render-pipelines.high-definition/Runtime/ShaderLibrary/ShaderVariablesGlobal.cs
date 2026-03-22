@@ -158,6 +158,10 @@ namespace UnityEngine.Rendering.HighDefinition
         public float _VBufferRcpSliceCount;
         public float _VBufferRcpInstancedViewCount;  // Used to remap VBuffer coordinates for XR
         public float _VBufferLastSliceDist;          // The distance to the middle of the last slice
+        public float _VBufferDitherIntensity;         // Dithering intensity for volumetric fog sampling
+        public uint _UseIGNDither;                    // Use Interleaved Gradient Noise instead of Blue Noise for dithering
+        public float _VBufferDitherColorIntensity;    // Dithering intensity for color quantization
+        public float _VBufferUnused0;                 // Padding to maintain alignment
 
         public Vector4 _ShadowAtlasSize;
         public Vector4 _CascadeShadowAtlasSize;

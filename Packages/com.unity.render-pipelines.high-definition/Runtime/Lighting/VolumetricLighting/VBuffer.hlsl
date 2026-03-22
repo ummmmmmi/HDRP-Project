@@ -24,12 +24,15 @@ float4 SampleVBuffer(TEXTURE3D_PARAM(VBuffer, clampSampler),
                      float4 VBufferDistanceDecodingParams,
                      bool   biasLookup,
                      bool   quadraticFilterXY,
-                     bool   clampToBorder)
+                     bool   clampToBorder,
+                     float  depthOffset = 0.0)
 {
     // These are the viewport coordinates.
     float2 uv = positionNDC;
     float  w  = EncodeLogarithmicDepthGeneralized(linearDistance, VBufferDistanceEncodingParams);
 
+    w += depthOffset;
+    
     if (biasLookup)
     {
         // The value is higher than 0.5 (we use half of the length the diagonal of a unit cube).
@@ -119,7 +122,8 @@ float4 SampleVBuffer(TEXTURE3D_PARAM(VBuffer, clampSampler),
                      float4   VBufferDistanceDecodingParams,
                      bool     biasLookup,
                      bool     quadraticFilterXY,
-                     bool     clampToBorder)
+                     bool     clampToBorder,
+                     float    depthOffset = 0.0)
 {
     float2 positionNDC    = ComputeNormalizedDeviceCoordinates(positionWS, viewProjMatrix);
     float  linearDistance = distance(positionWS, cameraPositionWS);
@@ -134,7 +138,8 @@ float4 SampleVBuffer(TEXTURE3D_PARAM(VBuffer, clampSampler),
                          VBufferDistanceDecodingParams,
                          biasLookup,
                          quadraticFilterXY,
-                         clampToBorder);
+                         clampToBorder,
+                         depthOffset);
 }
 
 #endif // UNITY_VBUFFER_INCLUDED
