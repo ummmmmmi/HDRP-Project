@@ -305,13 +305,18 @@ bool EvaluateAtmosphericScattering(PositionInputs posInput, float3 V, out float3
             else
             {
                 // Generate blue noise for dithering
-                blueNoiseX = GetBNDSequenceSample(posInput.positionSS.xy, uint(_FrameCount) & 255, 0);
-                blueNoiseY = GetBNDSequenceSample(posInput.positionSS.xy, uint(_FrameCount) & 255, 1);
+                // blueNoiseX = GetBNDSequenceSample(posInput.positionSS.xy, uint(_FrameCount) & 255, 0);
+                // blueNoiseY = GetBNDSequenceSample(posInput.positionSS.xy, uint(_FrameCount) & 255, 1);
+
                 // blueNoiseX = remap_tri(blueNoiseX);
                 // blueNoiseY = remap_tri(blueNoiseY);
                 // float2 blueNoiseXY = float2(blueNoiseX, blueNoiseY) - 0.5f;
                 // float2 blueNoiseXY = sqrt(float2(blueNoiseX, blueNoiseY)) * 2 - 1;
-                blueNoiseXY = float2(blueNoiseX, blueNoiseY) * 2 - 1;
+
+                // blueNoiseXY = float2(blueNoiseX, blueNoiseY) * 2 - 1;
+
+                // optimize: 使用时序蓝噪声替代两次 GetBNDSequenceSample（1次纹理采样 vs 6次）
+                blueNoiseXY = GetTemporalBlueNoiseFloat2(posInput.positionSS.xy, float(_FrameCount)) * 2 - 1;
             }
 
             float ditherIntensity = _VBufferDitherIntensity;
@@ -367,9 +372,13 @@ bool EvaluateAtmosphericScattering(PositionInputs posInput, float3 V, out float3
             else
             {
                 // Generate blue noise for color dithering using triangular distribution
-                blueNoiseR = GetBNDSequenceSample(posInput.positionSS.xy, uint(_FrameCount) & 255, 2);
-                blueNoiseG = GetBNDSequenceSample(posInput.positionSS.xy, uint(_FrameCount) & 255, 3);
-                blueNoiseB = GetBNDSequenceSample(posInput.positionSS.xy, uint(_FrameCount) & 255, 4);
+                // blueNoiseR = GetBNDSequenceSample(posInput.positionSS.xy, uint(_FrameCount) & 255, 2);
+                // blueNoiseG = GetBNDSequenceSample(posInput.positionSS.xy, uint(_FrameCount) & 255, 3);
+                // blueNoiseB = GetBNDSequenceSample(posInput.positionSS.xy, uint(_FrameCount) & 255, 4);
+
+                blueNoiseR = GetTemporalBlueNoiseFloat(posInput.positionSS.xy, float(_FrameCount + 1));
+                blueNoiseG = GetTemporalBlueNoiseFloat(posInput.positionSS.xy, float(_FrameCount + 2));
+                blueNoiseB = GetTemporalBlueNoiseFloat(posInput.positionSS.xy, float(_FrameCount + 3));
             }
 
             float3 colorDither = float3(

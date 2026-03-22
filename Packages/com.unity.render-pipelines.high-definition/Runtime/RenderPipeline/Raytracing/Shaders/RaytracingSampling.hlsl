@@ -77,4 +77,35 @@ float GetBNDSequenceSample(uint2 pixelCoord, uint sampleIndex, uint sampleDimens
     return (scramblingValue + value) / 256.0;
 }
 
+// =============================================================================
+// 时序蓝噪声采样（INSIDE 风格）
+// =============================================================================
+// 仅 1 次纹理采样，用质数混合时间和像素坐标，每帧获得不同的蓝噪声图案
+// 参考自 INSIDE 的体积雾实现
+
+// 获取时序蓝噪声（float 版本，��� 1 次纹理采样）
+// time: 通常是帧号或 _Time.y
+// 返回: [0, 1) 范围的蓝噪声值
+float GetTemporalBlueNoiseFloat(uint2 pixelCoord, float time)
+{
+    // INSIDE 风格：用质数计算时间偏移，然后加到像素坐标上
+    // 这样相邻像素保持 1:1 对应，只是噪声图案整体平移
+    uint timeOffsetX = uint(time * 1259.0) & 255;  // 1259 是质数
+    uint timeOffsetY = uint(time * 1277.0) & 255;  // 1277 是质数
+
+    // 像素坐标 + 时间偏移，保持 1:1 的像素对应关系
+    uint2 noiseCoord = (pixelCoord + uint2(timeOffsetX, timeOffsetY)) & 255;
+    return _ScramblingTexture[noiseCoord].x;
+}
+
+// 获取时序蓝噪声（float2 版本，仅 1 次纹理采样）
+float2 GetTemporalBlueNoiseFloat2(uint2 pixelCoord, float time)
+{
+    uint timeOffsetX = uint(time * 1259.0) & 255;
+    uint timeOffsetY = uint(time * 1277.0) & 255;
+
+    uint2 noiseCoord = (pixelCoord + uint2(timeOffsetX, timeOffsetY)) & 255;
+    return _ScramblingTexture[noiseCoord].xy;
+}
+
 #endif // UNITY_RAYTRACING_SAMPLING_INCLUDED
