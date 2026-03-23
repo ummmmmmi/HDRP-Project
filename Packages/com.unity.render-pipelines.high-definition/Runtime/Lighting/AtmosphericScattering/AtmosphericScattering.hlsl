@@ -292,39 +292,35 @@ bool EvaluateAtmosphericScattering(PositionInputs posInput, float3 V, out float3
     {
         float4 volFog = float4(0.0, 0.0, 0.0, 0.0);
 
+        // 为体积雾抖动和颜色抖动生成蓝噪声 (移到块顶部，所有路径可用)
+        float2 blueNoiseXY = 0.0f;
+        float blueNoiseR = 0.0f, blueNoiseG = 0.0f, blueNoiseB = 0.0f;
+
+        if (_UseIGNDither)
+        {
+            float jitterAngle = InterleavedGradientNoise(posInput.positionSS.xy, uint(_FrameCount)) * 2.0 * PI;
+            float jitterRadius = InterleavedGradientNoise(posInput.positionSS.xy + float2(127.1, 311.7), uint(_FrameCount));
+            blueNoiseXY = float2(sin(jitterAngle), cos(jitterAngle)) * jitterRadius;
+            blueNoiseR = 0.5f + 0.5f * sin(jitterAngle);
+            blueNoiseG = 0.5f + 0.5f * cos(jitterAngle);
+            blueNoiseB = InterleavedGradientNoise(posInput.positionSS.xy + float2(127.1f, 311.7f), uint(_FrameCount));
+        }
+        else
+        {
+            blueNoiseXY = GetTemporalBlueNoiseFloat2(posInput.positionSS.xy, float(_FrameCount)) * 2.0 - 1.0;
+            blueNoiseR = GetTemporalBlueNoiseFloat(posInput.positionSS.xy, float(_FrameCount + 1));
+            blueNoiseG = GetTemporalBlueNoiseFloat(posInput.positionSS.xy, float(_FrameCount + 2));
+            blueNoiseB = GetTemporalBlueNoiseFloat(posInput.positionSS.xy, float(_FrameCount + 3));
+        }
+
         if (_EnableVolumetricFog != 0)
         {
-            float blueNoiseX, blueNoiseY;
-            float2 blueNoiseXY = 0.0f;
-            if (_UseIGNDither)
-            {
-                float jitterAngle = InterleavedGradientNoise(posInput.positionSS.xy, uint(_FrameCount)) * 2.0 * PI;
-                float jitterRadius = InterleavedGradientNoise(posInput.positionSS.xy + float2(127.1, 311.7), uint(_FrameCount));
-                blueNoiseXY = float2(sin(jitterAngle), cos(jitterAngle)) * jitterRadius;
-            }
-            else
-            {
-                // Generate blue noise for dithering
-                // blueNoiseX = GetBNDSequenceSample(posInput.positionSS.xy, uint(_FrameCount) & 255, 0);
-                // blueNoiseY = GetBNDSequenceSample(posInput.positionSS.xy, uint(_FrameCount) & 255, 1);
-
-                // blueNoiseX = remap_tri(blueNoiseX);
-                // blueNoiseY = remap_tri(blueNoiseY);
-                // float2 blueNoiseXY = float2(blueNoiseX, blueNoiseY) - 0.5f;
-                // float2 blueNoiseXY = sqrt(float2(blueNoiseX, blueNoiseY)) * 2 - 1;
-
-                // blueNoiseXY = float2(blueNoiseX, blueNoiseY) * 2 - 1;
-
-                // optimize: 使用时序蓝噪声替代两次 GetBNDSequenceSample（1次纹理采样 vs 6次）
-                blueNoiseXY = GetTemporalBlueNoiseFloat2(posInput.positionSS.xy, float(_FrameCount)) * 2 - 1;
-            }
-
             float ditherIntensity = _VBufferDitherIntensity;
 
             float2 uvOffset = blueNoiseXY * _VBufferRcpSliceCount * ditherIntensity;
             float depthOffset = blueNoiseXY.x * _VBufferRcpSliceCount * ditherIntensity;
-                
-            bool doBiquadraticReconstruction = _VolumetricFilteringEnabled == 0; // Only if filtering is disabled.
+
+            bool doBiquadraticReconstruction = _VolumetricFilteringEnabled == 0;
             float4 value = SampleVBuffer(TEXTURE3D_ARGS(_VBufferLighting, s_linear_clamp_sampler),
                                          posInput.positionNDC + uvOffset,
                                          tFrag,
@@ -336,77 +332,32 @@ bool EvaluateAtmosphericScattering(PositionInputs posInput, float3 V, out float3
                                          true, doBiquadraticReconstruction, false,
                                          depthOffset);
 
-            // Color dithering to break quantization banding based on dynamic range
-            // Half-float quantization step varies with magnitude
-            float maxColor = Max3(value.r, value.g, value.b);
+            // 从 log 空间解码到线性空间
+            // i = (a / d) * rgb, 其中 a = 1 - exp(-d), d = optical_depth
+            float invD = (value.a > 1e-6f) ? rcp(value.a) : 1.0f;
+            float linearFactor = (1.0f - exp(-value.a)) * invD; // = a/d, RGB 共用
+            float3 decodedValue = value.rgb * linearFactor;
+            float maxDecoded = Max3(decodedValue.r, decodedValue.g, decodedValue.b);
 
-            // Precomputed quantization steps for different ranges
-            // Index based on floor(log2(max(1, maxColor))) + 1
-            static const float kHalfFloatQuantSteps[8] = {
-                0.00048828125,  // 2^-11 for [0, 1)
-                0.0009765625,   // 2^-10 for [1, 2)
-                0.001953125,    // 2^-9  for [2, 4)
-                0.00390625,     // 2^-8  for [4, 8)
-                0.0078125,      // 2^-7  for [8, 16)
-                0.015625,       // 2^-6  for [16, 32)
-                0.03125,        // 2^-5  for [32, 64)
-                0.0625          // 2^-4  for [64, 128)
-            };
+            // R16G16B16A16 (每通道 10-bit mantissa) 的量化步长
+            // quantStep = value / 2^10, 覆盖约 1 个 8-bit LSB
+            float quantStep = max(maxDecoded, 1.0f / 255.0f) / 1024.0f;
 
-            uint rangeIndex = (maxColor > 0.0f) ? clamp(uint(floor(log2(max(1.0f, maxColor)))) + 1, 0, 7) : 0;
-            float quantStep = kHalfFloatQuantSteps[rangeIndex];
+            float3 colorDither = float3(remap_tri(blueNoiseR), remap_tri(blueNoiseG), remap_tri(blueNoiseB));
 
-            float blueNoiseR, blueNoiseG, blueNoiseB;
+            // 应用到解码后的线性值上
+            decodedValue.rgb += colorDither * quantStep * 10.0f * _VBufferDitherColorIntensity;
 
-            if (_UseIGNDither)
-            {
-                // 第一次IGN生成2个正交值
-                float jitterAngle1 = InterleavedGradientNoise(posInput.positionSS.xy, uint(_FrameCount)) * 2.0 * PI;
-                blueNoiseR = 0.5 + 0.5 * sin(jitterAngle1);
-                blueNoiseG = 0.5 + 0.5 * cos(jitterAngle1);
+            // 重新编码回 log 空间以供 DelinearizeRGBA 处理
+            // rgb_log = decoded / linearFactor = decoded * d / a
+            float3 reencodedValue = decodedValue.rgb / max(linearFactor, 1e-6f);
 
-                // 第二次IGN（加偏移）生成第3个值
-                float2 offset = float2(127.1, 311.7);
-                blueNoiseB = InterleavedGradientNoise(posInput.positionSS.xy + offset, uint(_FrameCount));
-            }
-            else
-            {
-                // Generate blue noise for color dithering using triangular distribution
-                // blueNoiseR = GetBNDSequenceSample(posInput.positionSS.xy, uint(_FrameCount) & 255, 2);
-                // blueNoiseG = GetBNDSequenceSample(posInput.positionSS.xy, uint(_FrameCount) & 255, 3);
-                // blueNoiseB = GetBNDSequenceSample(posInput.positionSS.xy, uint(_FrameCount) & 255, 4);
-
-                blueNoiseR = GetTemporalBlueNoiseFloat(posInput.positionSS.xy, float(_FrameCount + 1));
-                blueNoiseG = GetTemporalBlueNoiseFloat(posInput.positionSS.xy, float(_FrameCount + 2));
-                blueNoiseB = GetTemporalBlueNoiseFloat(posInput.positionSS.xy, float(_FrameCount + 3));
-            }
-
-            float3 colorDither = float3(
-                remap_tri(blueNoiseR),
-                remap_tri(blueNoiseG),
-                remap_tri(blueNoiseB)
-            ) + 0.24;
-
-            // float3 colorDither = float3(
-            //     (blueNoiseR),
-            //     (blueNoiseG),
-            //     (blueNoiseB)
-            // );
-
-            float ditherColorIntensity = _VBufferDitherColorIntensity;
-
-            // Use perceptual noise scale: noise proportional to color intensity (Weber's law)
-            // Base noise ~0.5-2% of color value for visible banding reduction
-            // Also scale by quantStep for HDR ranges
-            float perceptualNoiseScale = max(0.01, maxColor * 0.01); // ~1% of color value, minimum 0.01
-            perceptualNoiseScale = 1.0f / 255.0f;
-            value.rgb += colorDither * quantStep * 100 * ditherColorIntensity;
-            
-            // TODO: re-enable tone mapping after implementing pre-exposure.
-            volFog = DelinearizeRGBA(float4(/*FastTonemapInvert*/(value.rgb), value.a));
+            // volFog = DelinearizeRGBA(float4(reencodedValue, value.a));
+            volFog = DelinearizeRGBA(float4(value.rgb, value.a));
             volFogEnd = _VBufferLastSliceDist;
 
-            // debug
+            // 调试用
+            // color = float4(colorDither * 0.5f + 0.5f, 1.0f); // 可视化 dither
             // color = volFog;
             // opacity = 1.0f;
             // return true;
@@ -442,6 +393,15 @@ bool EvaluateAtmosphericScattering(PositionInputs posInput, float3 V, out float3
 
         color = volFog.rgb; // Already pre-exposed
         opacity = volFog.a;
+
+        #ifndef SUPPORT_WATER_ABSORPTION
+            // 在远处雾路径返回前加抖动
+            float maxDistant = Max3(color.r, color.g, color.b);
+            float quantDistant = max(maxDistant, 1.0f / 255.0f) / 1024.0f;
+            float3 ditherDistant = float3(remap_tri(blueNoiseR), remap_tri(blueNoiseG), remap_tri(blueNoiseB)) + 0.1667;
+            // float3 ditherDistant = float3((blueNoiseR), (blueNoiseG), (blueNoiseB))*2-1;
+            color.rgb += ditherDistant * quantDistant * 20.0f * _VBufferDitherColorIntensity;
+        #endif
     }
 
     #ifdef SUPPORT_WATER_ABSORPTION
@@ -503,6 +463,12 @@ bool EvaluateAtmosphericScattering(PositionInputs posInput, float3 V, out float3
         */
 
         // Don't apply atmospheric scattering from sky when underwater
+        // 在水下路径返回前加抖动
+        // float maxUnderwater = Max3(color.r, color.g, color.b);
+        // float quantUnderwater = max(maxUnderwater, 1.0f / 255.0f) / 1024.0f;
+        // float3 ditherUnderwater = float3(remap_tri(blueNoiseR), remap_tri(blueNoiseG), remap_tri(blueNoiseB)) - 0.5f;
+        // color.rgb += ditherUnderwater * quantUnderwater * 4.0f * _VBufferDitherColorIntensity;
+
         return true;
     }
     #endif
